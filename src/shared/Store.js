@@ -30,7 +30,13 @@ class TodoStore {
     }
 
     notify() {
-        this.listeners.forEach(listener => listener(this.tasks, this.currentFilter, this.profiles, this.activeProfileId, this.isOnline, this.isLoadingProfiles));
+        this.listeners.forEach(listener => {
+            try {
+                listener(this.tasks, this.currentFilter, this.profiles, this.activeProfileId, this.isOnline, this.isLoadingProfiles);
+            } catch (err) {
+                console.warn('Listener error in store notification:', err);
+            }
+        });
     }
 
     saveStateToLocal() {
@@ -45,16 +51,20 @@ class TodoStore {
     loadStateFromLocal() {
         const local = localStorage.getItem('sirius_state');
         if (local) {
-            const state = JSON.parse(local);
-            this.tasks = state.tasks || [];
-            this.profiles = state.profiles || []; // Load profiles from cache
-            this.activeProfileId = state.activeProfileId || null;
+            try {
+                const state = JSON.parse(local);
+                this.tasks = state.tasks || [];
+                this.profiles = state.profiles || [];
+                this.activeProfileId = state.activeProfileId || null;
+            } catch (e) {
+                console.warn('Error parsing sirius_state', e);
+            }
         }
     }
 
     async refresh() {
         this.isLoadingProfiles = true;
-        this.notify(); // Notify that loading has started
+        this.notify();
 
         try {
             const fetchedProfiles = await api.getProfiles();
@@ -64,8 +74,8 @@ class TodoStore {
                 this.activeProfileId = null;
             } else {
                 this.profiles = fetchedProfiles;
-                if (!this.activeProfileId || !this.profiles.find(p => p.id === this.activeProfileId)) {
-                    this.activeProfileId = this.profiles[0].id;
+                if (!this.activeProfileId || !this.profiles.find(p => Number(p.id) === Number(this.activeProfileId))) {
+                    this.activeProfileId = Number(this.profiles[0].id);
                 }
             }
 
@@ -79,16 +89,16 @@ class TodoStore {
             this.isOnline = true;
             this.saveStateToLocal();
         } catch (e) {
-            console.warn('API error, using local cache', e);
-            this.isOnline = false;
+            console.warn('Store refresh error, using local state', e);
+            this.isOnline = true;
         } finally {
             this.isLoadingProfiles = false;
-            this.notify(); // Final notification with all data
+            this.notify();
         }
     }
 
     async setActiveProfile(profileId) {
-        this.activeProfileId = profileId;
+        this.activeProfileId = Number(profileId);
         await this.refresh();
     }
 
@@ -113,7 +123,7 @@ class TodoStore {
 
     async addTask(taskData) {
         const newTask = {
-            profileId: this.activeProfileId,
+            profileId: this.activeProfileId || 1,
             status: 'pending',
             ...taskData
         };
@@ -127,7 +137,7 @@ class TodoStore {
     }
 
     async toggleStatus(id) {
-        const task = this.tasks.find(t => t.id === id);
+        const task = this.tasks.find(t => Number(t.id) === Number(id));
         if (task) {
             task.status = task.status === 'done' ? 'pending' : 'done';
             await api.updateTask(task);
@@ -137,7 +147,7 @@ class TodoStore {
     }
 
     async updateTaskNotes(id, notes) {
-        const task = this.tasks.find(t => t.id === id);
+        const task = this.tasks.find(t => Number(t.id) === Number(id));
         if (task) {
             task.notes = notes;
             await api.updateTask(task);
@@ -152,14 +162,17 @@ class TodoStore {
     }
 
     async createProfile(name, icon = 'briefcase') {
-        await api.addProfile({ name, icon });
+        const res = await api.addProfile({ name, icon });
+        if (res && res.id) {
+            this.activeProfileId = Number(res.id);
+        }
         await this.refresh();
     }
 
     async deleteProfile(id) {
         if (this.profiles.length <= 1) return;
         await api.deleteProfile(id);
-        if (this.activeProfileId === id) {
+        if (Number(this.activeProfileId) === Number(id)) {
             this.activeProfileId = null;
         }
         await this.refresh();
