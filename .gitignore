@@ -14,4 +14,4 @@ backend/bin/
 Thumbs.db
 
 # Environment
-.env
+.envdist/
